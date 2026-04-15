@@ -1,0 +1,33 @@
+{
+  "name": "scraping-service",
+  "version": "1.0.0",
+  "description": "Metadata scraping service with metascraper",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "ts-node src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "scraping",
+    "metadata",
+    "metascraper"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@fastify/cors": "^8.5.0",
+    "dotenv": "^16.3.1",
+    "fastify": "^4.25.0",
+    "metascraper": "^5.50.0",
+    "metascraper-description": "^5.50.0",
+    "metascraper-image": "^5.50.0",
+    "metascraper-logo": "^5.50.0",
+    "metascraper-title": "^5.50.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
