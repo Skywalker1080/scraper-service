@@ -1,9 +1,8 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { ScrapeRequest, ScrapeResponse } from "../types";
 import { cache, getCacheKey } from "../services/cache";
-import { fetchWithMetascraper } from "../services/metascraper";
-import { isYouTubeUrl, fetchYouTubeMetadata } from "../utils/youtube";
-import { getFallbackMetadata } from "../utils/fallback";
+import { scrapeQueue } from "../services/queue";
+import { queueEvents } from "../index";
 
 export async function scrapeRoute(
   request: FastifyRequest,
@@ -11,7 +10,7 @@ export async function scrapeRoute(
 ) {
   const { url } = request.body as ScrapeRequest;
 
-  // Validate URL
+  // Validate URL format
   try {
     new URL(url);
   } catch {
@@ -20,57 +19,41 @@ export async function scrapeRoute(
 
   const cacheKey = getCacheKey(url);
 
+  // 1. Cache hit — return immediately, no queue needed
+  const cached = await cache.get(cacheKey);
+  if (cached) {
+    request.log.info(`Cache hit for ${url}`);
+    return reply.send(cached);
+  }
+
+  // 2. Cache miss — enqueue and wait for the result (max 18s, safe under Vercel 20s limit)
+  request.log.info(`Cache miss for ${url}, enqueuing...`);
+
+  let job;
   try {
-    // Check cache first
-    const cached = await cache.get(cacheKey);
-    if (cached) {
-      console.log(`Cache hit for ${url}`);
-      return reply.send(cached.data);
+    job = await scrapeQueue.add("scrape", { url });
+  } catch (err) {
+    request.log.error(`Failed to enqueue job for ${url}: ${String(err)}`);
+    return reply.status(500).send({ error: "Failed to queue scrape job" });
+  }
+
+  try {
+    const result = await job.waitUntilFinished(queueEvents, 18000);
+    return reply.send(result as ScrapeResponse);
+  } catch (err: any) {
+    const msg = err.message || "";
+
+    if (msg.includes("SSRF") || msg.includes("not a public IP")) {
+      return reply.status(400).send({ error: "Invalid URL: Must be a public IP" });
+    }
+    if (msg.includes("size limit")) {
+      return reply.status(413).send({ error: "Payload Too Large: File exceeds 5MB limit" });
+    }
+    if (msg.includes("timed out")) {
+      return reply.status(504).send({ error: "Scrape job timed out" });
     }
 
-    console.log(`Cache miss for ${url}, fetching...`);
-
-    let metadata: ScrapeResponse;
-
-    // Try YouTube oEmbed first if applicable
-    if (isYouTubeUrl(url)) {
-      console.log(`YouTube URL detected, using oEmbed`);
-      const youtubeData = await fetchYouTubeMetadata(url);
-      if (youtubeData) {
-        metadata = youtubeData;
-        await cache.set(cacheKey, metadata);
-        return reply.send(metadata);
-      }
-    }
-
-    // Try metascraper
-    try {
-      console.log(`Attempting metascraper for ${url}`);
-      metadata = await fetchWithMetascraper(url);
-      await cache.set(cacheKey, metadata);
-      return reply.send(metadata);
-    } catch (metascraperError: any) {
-      console.error(`Metascraper failed for ${url}:`, metascraperError.message);
-      
-      const errMsg = metascraperError.message || "";
-      if (errMsg.includes("SSRF") || errMsg.includes("not a public IP")) {
-        return reply.status(400).send({ error: "Invalid URL: Must be a public IP" });
-      }
-      if (errMsg.includes("size limit")) {
-        return reply.status(413).send({ error: "Payload Too Large: File exceeds 5MB limit" });
-      }
-    }
-
-    // Fallback to hostname-based metadata
-    console.log(`Using fallback metadata for ${url}`);
-    metadata = getFallbackMetadata(url);
-    await cache.set(cacheKey, metadata);
-    return reply.send(metadata);
-  } catch (error) {
-    console.error(`Scraping failed for ${url}:`, error);
-    
-    // Always return valid metadata to prevent UI breakage
-    const fallback = getFallbackMetadata(url);
-    return reply.send(fallback);
+    request.log.error(`Job failed for ${url}:`, msg);
+    return reply.status(500).send({ error: "Scraping failed" });
   }
 }
