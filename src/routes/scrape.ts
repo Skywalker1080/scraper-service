@@ -6,7 +6,7 @@ import { isYouTubeUrl, fetchYouTubeMetadata } from "../utils/youtube";
 import { getFallbackMetadata } from "../utils/fallback";
 
 export async function scrapeRoute(
-  request: FastifyRequest<{ Body: ScrapeRequest }>,
+  request: FastifyRequest,
   reply: FastifyReply
 ) {
   const { url } = request.body as ScrapeRequest;
@@ -49,8 +49,16 @@ export async function scrapeRoute(
       metadata = await fetchWithMetascraper(url);
       await cache.set(cacheKey, metadata);
       return reply.send(metadata);
-    } catch (metascraperError) {
-      console.error(`Metascraper failed for ${url}:`, metascraperError);
+    } catch (metascraperError: any) {
+      console.error(`Metascraper failed for ${url}:`, metascraperError.message);
+      
+      const errMsg = metascraperError.message || "";
+      if (errMsg.includes("SSRF") || errMsg.includes("not a public IP")) {
+        return reply.status(400).send({ error: "Invalid URL: Must be a public IP" });
+      }
+      if (errMsg.includes("size limit")) {
+        return reply.status(413).send({ error: "Payload Too Large: File exceeds 5MB limit" });
+      }
     }
 
     // Fallback to hostname-based metadata

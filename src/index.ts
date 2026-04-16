@@ -2,8 +2,10 @@ import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { scrapeRoute } from "./routes/scrape";
+import { verifyApiKey } from "./middleware/auth";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
+const VERCEL_DOMAIN = process.env.VERCEL_DOMAIN;
 
 const fastify = Fastify({
   logger: true,
@@ -14,11 +16,26 @@ const start = async () => {
   try {
     // Enable CORS
     await fastify.register(cors, {
-      origin: true,
+      origin: VERCEL_DOMAIN ? `https://${VERCEL_DOMAIN}` : true,
     });
 
     // Register routes
-    fastify.post("/scrape", scrapeRoute);
+    fastify.post(
+      "/scrape",
+      {
+        onRequest: verifyApiKey,
+        schema: {
+          body: {
+            type: "object",
+            required: ["url"],
+            properties: {
+              url: { type: "string" },
+            },
+          },
+        },
+      },
+      scrapeRoute
+    );
 
     // Health check endpoint
     fastify.get("/health", async (request, reply) => {

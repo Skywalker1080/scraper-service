@@ -3,3 +3,7 @@ dist
 .env
 *.log
 .DS_Store
+
+context-window.pem
+generate-secret.js
+.env.example
