@@ -4,6 +4,7 @@ import { ScrapeResponse } from "../types";
 import { cache, getCacheKey } from "./cache";
 import { fetchWithMetascraper } from "./metascraper";
 import { isYouTubeUrl, fetchYouTubeMetadata } from "../utils/youtube";
+import { isTwitterUrl, fetchTwitterMetadata } from "../utils/twitter";
 import { getFallbackMetadata } from "../utils/fallback";
 
 const QUEUE_NAME = "scrape-queue";
@@ -44,6 +45,13 @@ export const scrapeWorker = new Worker<ScrapeJobData, ScrapeResponse>(
         await cache.set(cacheKey, youtubeData);
         return youtubeData;
       }
+    }
+
+    // Twitter / X — never scrape directly (blocked by anti-bot); use oEmbed or branded stub
+    if (isTwitterUrl(url)) {
+      const twitterData = await fetchTwitterMetadata(url);
+      await cache.set(cacheKey, twitterData);
+      return twitterData;
     }
 
     // Metascraper
