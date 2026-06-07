@@ -5,7 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import { QueueEvents } from "bullmq";
 import { scrapeRoute } from "./routes/scrape";
 import { verifyApiKey } from "./middleware/auth";
-import { redis } from "./services/redis";
+import { redis, ENABLE_REDIS } from "./services/redis";
 import { scrapeWorker } from "./services/queue";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -14,10 +14,12 @@ const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || "100", 10);
 
 const fastify = Fastify({ logger: true });
 
-// QueueEvents singleton — used by scrapeRoute to await job completion
-export const queueEvents = new QueueEvents("scrape-queue", {
-  connection: redis,
-});
+// QueueEvents singleton — used by scrapeRoute to await job completion (only if Redis is enabled)
+export const queueEvents = ENABLE_REDIS
+  ? new QueueEvents("scrape-queue", {
+      connection: redis!,
+    })
+  : undefined;
 
 // Start server
 const start = async () => {
@@ -27,11 +29,11 @@ const start = async () => {
       origin: VERCEL_DOMAIN ? `https://${VERCEL_DOMAIN}` : true,
     });
 
-    // Rate limiting: 100 requests per minute per IP (backed by Redis)
+    // Rate limiting: 100 requests per minute per IP (backed by Redis if enabled, otherwise in-memory)
     await fastify.register(rateLimit, {
       max: RATE_LIMIT_MAX,
       timeWindow: "1 minute",
-      redis,
+      ...(ENABLE_REDIS && redis ? { redis } : {}),
       keyGenerator: (request) =>
         request.ip ?? request.headers["x-forwarded-for"]?.toString() ?? "unknown",
     });
@@ -71,9 +73,15 @@ const start = async () => {
 // Graceful shutdown
 const shutdown = async () => {
   console.log("Shutting down gracefully...");
-  await scrapeWorker.close();
-  await queueEvents.close();
-  await redis.quit();
+  if (scrapeWorker) {
+    await scrapeWorker.close();
+  }
+  if (queueEvents) {
+    await queueEvents.close();
+  }
+  if (redis) {
+    await redis.quit();
+  }
   await fastify.close();
   process.exit(0);
 };

@@ -1,8 +1,9 @@
 import { FastifyRequest, FastifyReply } from "fastify";
 import { ScrapeRequest, ScrapeResponse } from "../types";
 import { cache, getCacheKey } from "../services/cache";
-import { scrapeQueue } from "../services/queue";
+import { scrapeQueue, scrapeUrlDirectly } from "../services/queue";
 import { queueEvents } from "../index";
+import { ENABLE_REDIS } from "../services/redis";
 
 export async function scrapeRoute(
   request: FastifyRequest,
@@ -26,6 +27,25 @@ export async function scrapeRoute(
     return reply.send(cached);
   }
 
+  // If Redis or the queue is disabled, scrape the URL directly (inline)
+  if (!ENABLE_REDIS || !scrapeQueue) {
+    request.log.info(`Redis/Queue is disabled. Scraping ${url} directly...`);
+    try {
+      const result = await scrapeUrlDirectly(url);
+      return reply.send(result);
+    } catch (err: any) {
+      const msg = err.message || "";
+      if (msg.includes("SSRF") || msg.includes("not a public IP")) {
+        return reply.status(400).send({ error: "Invalid URL: Must be a public IP" });
+      }
+      if (msg.includes("size limit")) {
+        return reply.status(413).send({ error: "Payload Too Large: File exceeds 5MB limit" });
+      }
+      request.log.error(`Direct scraping failed for ${url}:`, msg);
+      return reply.status(500).send({ error: "Scraping failed" });
+    }
+  }
+
   // 2. Cache miss — enqueue and wait for the result (max 18s, safe under Vercel 20s limit)
   request.log.info(`Cache miss for ${url}, enqueuing...`);
 
@@ -38,7 +58,7 @@ export async function scrapeRoute(
   }
 
   try {
-    const result = await job.waitUntilFinished(queueEvents, 18000);
+    const result = await job.waitUntilFinished(queueEvents!, 18000);
     return reply.send(result as ScrapeResponse);
   } catch (err: any) {
     const msg = err.message || "";
