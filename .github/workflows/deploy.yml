@@ -1,0 +1,35 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            # Navigate to the app directory
+            cd ~/scraping-service
+            
+            # Fetch the latest code
+            git pull origin main
+            
+            # Load NVM (Node Version Manager)
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # Install dependencies (will trigger postinstall which runs tsc build)
+            npm install --production
+            
+            # Restart or reload PM2 process
+            pm2 reload scraping-service || pm2 start dist/index.js --name "scraping-service"
